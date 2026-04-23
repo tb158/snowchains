@@ -287,9 +287,9 @@ impl<S: Shell> Exec<RetrieveTestCases<Self, S>> for Atcoder<'_> {
 
         impl Entries {
             fn has_folder(&self, name: &str) -> bool {
-                self.0
-                    .iter()
-                    .any(|e| matches!(e, Either::Right(s) if s.split('/').last().unwrap() == name))
+                self.0.iter().any(
+                    |e| matches!(e, Either::Right(s) if s.split('/').next_back().unwrap() == name),
+                )
             }
 
             fn files(&self) -> Vec<String> {
@@ -310,7 +310,7 @@ impl<S: Shell> Exec<RetrieveTestCases<Self, S>> for Atcoder<'_> {
                 self.0
                     .iter()
                     .flat_map(|e| e.as_ref().right().map(Deref::deref))
-                    .map(|p| p.split('/').last().unwrap())
+                    .map(|p| p.split('/').next_back().unwrap())
                     .collect()
             }
         }
@@ -452,7 +452,7 @@ impl<S: Shell> Exec<RetrieveTestCases<Self, S>> for Atcoder<'_> {
             fn file_stem(path: impl AsRef<str>) -> String {
                 path.as_ref()
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap()
                     .split('.')
                     .next()
@@ -775,22 +775,13 @@ fn retrieve_sample_test_cases(
     let mut outcome = RetrieveTestCasesOutcome { problems: vec![] };
 
     for (contest, (contest_display_name, mut indexes_and_urls)) in problems {
-        let is_abc = contest.starts_with("abc");
-        if is_abc {
-            sess.shell().warn(format!(
-                "{contest_display_name:?} seems to be an ABC. Skipping extracting the time limit \
-                 and the relative/absolute error, because they are not \"specific integers or \
-                 strings\"",
-            ))?;
-        }
-
         let test_suites = sess
             .get(url!("/contests/{}/tasks_print", contest))
             .colorize_status_code(&[200], (), ..)
             .send()?
             .ensure_status(&[200])?
             .html()?
-            .extract_samples(is_abc);
+            .extract_samples();
 
         if indexes_and_urls.len() > test_suites.len() {
             sess.shell().warn(format!(
@@ -1527,10 +1518,7 @@ impl Html {
         .with_context(|| "Could not extract task indexes and URLs")
     }
 
-    fn extract_samples(
-        &self,
-        is_abc: bool,
-    ) -> Vec<anyhow::Result<(String, String, anyhow::Result<TestSuite>)>> {
+    fn extract_samples(&self) -> Vec<anyhow::Result<(String, String, anyhow::Result<TestSuite>)>> {
         return self
             .select(static_selector!(
                 "#main-container > div.row div[class=\"col-sm-12\"]",
@@ -1553,29 +1541,26 @@ impl Html {
                 };
 
                 let test_suite = (|| {
-                    let timelimit = (!is_abc) // a time limit is not a "specific" integer or string
-                        .then(|| {
-                            div.select(static_selector!(":scope > p"))
-                                .flat_map(|r| r.text())
-                                .flat_map(parse_timelimit)
-                                .exactly_one()
-                                .map_err(|_| "Could not extract the timelimit")
-                        })
-                        .transpose()?;
+                    let timelimit = div
+                        .select(static_selector!(":scope > p"))
+                        .flat_map(|r| r.text())
+                        .flat_map(parse_timelimit)
+                        .exactly_one()
+                        .map_err(|_| "Could not extract the timelimit")?;
 
                     // In `tasks_print`, there are multiple `#task-statement`s.
                     let samples = div
                         .select(static_selector!(":scope > div[id=\"task-statement\"]"))
                         .exactly_one()
                         .ok()
-                        .and_then(|s| extract_samples(s, is_abc))
+                        .and_then(extract_samples)
                         .ok_or("Could not extract the sample cases")?;
 
-                    Ok::<_, &str>(if timelimit == Some(Duration::new(0, 0)) {
+                    Ok::<_, &str>(if timelimit == Duration::new(0, 0) {
                         TestSuite::Unsubmittable
                     } else if let Samples::Batch(r#match, samples) = samples {
                         TestSuite::Batch(BatchTestSuite {
-                            timelimit,
+                            timelimit: Some(timelimit),
                             r#match,
                             cases: samples
                                 .into_iter()
@@ -1591,7 +1576,9 @@ impl Html {
                             extend: vec![],
                         })
                     } else {
-                        TestSuite::Interactive(InteractiveTestSuite { timelimit })
+                        TestSuite::Interactive(InteractiveTestSuite {
+                            timelimit: Some(timelimit),
+                        })
                     })
                 })()
                 .map_err(|e| anyhow!("{}: {}", index, e));
@@ -1621,7 +1608,7 @@ impl Html {
             Some(Duration::from_millis(timelimit))
         }
 
-        fn extract_samples(task_statement: ElementRef<'_>, is_abc: bool) -> Option<Samples> {
+        fn extract_samples(task_statement: ElementRef<'_>) -> Option<Samples> {
             // TODO:
             // - https://atcoder.jp/contests/arc019/tasks/arc019_4 (interactive)
             // - https://atcoder.jp/contests/arc021/tasks/arc021_4 (interactive)
@@ -1672,7 +1659,6 @@ impl Html {
                 |selector_for_header, selector_for_content, re_input, re_output| {
                     try_extract_samples(
                         task_statement,
-                        is_abc,
                         selector_for_header,
                         selector_for_content,
                         re_input,
@@ -1692,7 +1678,6 @@ impl Html {
 
         fn try_extract_samples(
             task_statement: ElementRef<'_>,
-            is_abc: bool,
             selector_for_header: &'static Selector,
             selector_for_content: &'static Selector,
             re_input: &'static Regex,
@@ -1701,7 +1686,7 @@ impl Html {
             // follows the official AtCoder contests (excluding some older contests) judge
             const DEFAULT_MATCH: Match = Match::SplitWhitespace;
 
-            #[allow(clippy::blocks_in_if_conditions)]
+            #[allow(clippy::blocks_in_conditions)]
             if task_statement
                 .select(static_selector!("strong"))
                 .flat_map(|r| r.text())
@@ -1714,9 +1699,7 @@ impl Html {
                 return Some(Samples::Interactive);
             }
 
-            let matching = if is_abc {
-                DEFAULT_MATCH // a relative/absolute error is not a "specific" integer or string
-            } else {
+            let matching = {
                 let error = task_statement
                     .select(static_selector!("var"))
                     .flat_map(|r| r.text())
