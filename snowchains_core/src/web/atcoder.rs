@@ -287,9 +287,9 @@ impl<S: Shell> Exec<RetrieveTestCases<Self, S>> for Atcoder<'_> {
 
         impl Entries {
             fn has_folder(&self, name: &str) -> bool {
-                self.0
-                    .iter()
-                    .any(|e| matches!(e, Either::Right(s) if s.split('/').last().unwrap() == name))
+                self.0.iter().any(
+                    |e| matches!(e, Either::Right(s) if s.split('/').next_back().unwrap() == name),
+                )
             }
 
             fn files(&self) -> Vec<String> {
@@ -310,7 +310,7 @@ impl<S: Shell> Exec<RetrieveTestCases<Self, S>> for Atcoder<'_> {
                 self.0
                     .iter()
                     .flat_map(|e| e.as_ref().right().map(Deref::deref))
-                    .map(|p| p.split('/').last().unwrap())
+                    .map(|p| p.split('/').next_back().unwrap())
                     .collect()
             }
         }
@@ -452,7 +452,7 @@ impl<S: Shell> Exec<RetrieveTestCases<Self, S>> for Atcoder<'_> {
             fn file_stem(path: impl AsRef<str>) -> String {
                 path.as_ref()
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap()
                     .split('.')
                     .next()
@@ -1655,15 +1655,25 @@ impl Html {
             static P8_CONTENT: Lazy<Selector> =
                 lazy_selector!("span.lang > span.lang-ja > div.part > section > pre");
 
-            let stmt = task_statement;
-            try_extract_samples(stmt, &P1_HEAD, &P1_CONTENT, &IN_JA, &OUT_JA)
-                .or_else(|| try_extract_samples(stmt, &P2_HEAD, &P2_CONTENT, &IN_EN, &OUT_EN))
-                .or_else(|| try_extract_samples(stmt, &P3_HEAD, &P3_CONTENT, &IN_JA, &OUT_JA))
-                .or_else(|| try_extract_samples(stmt, &P4_HEAD, &P4_CONTENT, &IN_JA, &OUT_JA))
-                .or_else(|| try_extract_samples(stmt, &P5_HEAD, &P5_CONTENT, &IN_JA, &OUT_JA))
-                .or_else(|| try_extract_samples(stmt, &P6_HEAD, &P6_CONTENT, &IN_JA, &OUT_JA))
-                .or_else(|| try_extract_samples(stmt, &P7_HEAD, &P7_CONTENT, &IN_JA, &OUT_JA))
-                .or_else(|| try_extract_samples(stmt, &P8_HEAD, &P8_CONTENT, &IN_JA, &OUT_JA))
+            let try_extract_samples =
+                |selector_for_header, selector_for_content, re_input, re_output| {
+                    try_extract_samples(
+                        task_statement,
+                        selector_for_header,
+                        selector_for_content,
+                        re_input,
+                        re_output,
+                    )
+                };
+
+            try_extract_samples(&P1_HEAD, &P1_CONTENT, &IN_JA, &OUT_JA)
+                .or_else(|| try_extract_samples(&P2_HEAD, &P2_CONTENT, &IN_EN, &OUT_EN))
+                .or_else(|| try_extract_samples(&P3_HEAD, &P3_CONTENT, &IN_JA, &OUT_JA))
+                .or_else(|| try_extract_samples(&P4_HEAD, &P4_CONTENT, &IN_JA, &OUT_JA))
+                .or_else(|| try_extract_samples(&P5_HEAD, &P5_CONTENT, &IN_JA, &OUT_JA))
+                .or_else(|| try_extract_samples(&P6_HEAD, &P6_CONTENT, &IN_JA, &OUT_JA))
+                .or_else(|| try_extract_samples(&P7_HEAD, &P7_CONTENT, &IN_JA, &OUT_JA))
+                .or_else(|| try_extract_samples(&P8_HEAD, &P8_CONTENT, &IN_JA, &OUT_JA))
         }
 
         fn try_extract_samples(
@@ -1676,8 +1686,7 @@ impl Html {
             // follows the official AtCoder contests (excluding some older contests) judge
             const DEFAULT_MATCH: Match = Match::SplitWhitespace;
 
-
-            #[allow(clippy::blocks_in_if_conditions)]
+            #[allow(clippy::blocks_in_conditions)]
             if task_statement
                 .select(static_selector!("strong"))
                 .flat_map(|r| r.text())
@@ -1718,7 +1727,7 @@ impl Html {
                         relative_error: None,
                         absolute_error: Some(error),
                     },
-                    _ => Match::Lines,
+                    _ => DEFAULT_MATCH,
                 }
             };
 
