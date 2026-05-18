@@ -522,7 +522,15 @@ pub fn judge<C: 'static + Future<Output = tokio::io::Result<()>> + Send>(
                     let mut child = { cmd }.spawn()?;
 
                     if let Some(mut child_stdin) = child.stdin.take() {
-                        child_stdin.write_all((*stdin).as_ref()).await?;
+                        // A child that exits before consuming stdin (e.g. a
+                        // solution that crashes immediately) breaks this pipe.
+                        // That is reported as a per-case Runtime Error via the
+                        // exit status below, so it must not abort the batch.
+                        match child_stdin.write_all((*stdin).as_ref()).await {
+                            Ok(()) => {}
+                            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
+                            Err(e) => return Err(e.into()),
+                        }
                     }
 
                     macro_rules! with_ctrl_c {
